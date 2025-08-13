@@ -2,7 +2,7 @@
 
 ## 概述
 
-本文档详细介绍如何使用Docker Compose部署基于ZooKeeper的动态消费控制系统。
+本文档详细介绍如何使用Docker Compose部署基于ZooKeeper的动态消费控制系统，包含RocketMQ消息队列、Dubbo服务、Elastic-Job分布式任务调度等功能。
 
 ## 服务架构
 
@@ -13,27 +13,31 @@
 | nginx | nginx | 80:80 | 负载均衡器 |
 | zookeeper | zookeeper | 2181:2181 | 分布式协调服务 |
 | rocketmq | rocketmq | 9876:9876, 10909:10909, 10911:10911 | 消息队列服务 |
-| product_gray | product_gray | - | 灰度环境生产者 |
-| product_prd | product_prd | - | 生产环境生产者 |
-| consumer_gray | consumer_gray | 8081:8081 | 灰度环境消费者 |
-| consumer_prd | consumer_prd | 8082:8081 | 生产环境消费者 |
+| product_gray | product_gray | 20881:20880 | 灰度环境生产者 |
+| product_prd | product_prd | 20882:20880 | 生产环境生产者 |
+| consumer_gray | consumer_gray | 8081:8080 | 灰度环境消费者 |
+| consumer_prd | consumer_prd | 8082:8080 | 生产环境消费者 |
 
 ### 服务依赖关系
 
 ```
 nginx
-├── product_gray
-│   └── rocketmq
-└── product_prd
-    └── rocketmq
+├── product_gray (Dubbo端口20881)
+│   ├── rocketmq
+│   └── zookeeper
+└── product_prd (Dubbo端口20882)
+    ├── rocketmq
+    └── zookeeper
 
-consumer_gray
+consumer_gray (HTTP端口8081)
 ├── rocketmq
-└── zookeeper
+├── zookeeper (Elastic-Job注册中心)
+└── nginx (负载均衡)
 
-consumer_prd
+consumer_prd (HTTP端口8082)
 ├── rocketmq
-└── zookeeper
+├── zookeeper (Elastic-Job注册中心)
+└── nginx (负载均衡)
 ```
 
 ## 配置说明
@@ -52,6 +56,72 @@ zookeeper:
   volumes:
     - zookeeper_data:/data
     - zookeeper_datalog:/datalog
+  healthcheck:
+    test: ["CMD", "zkServer.sh", "status"]
+    interval: 10s
+    timeout: 5s
+    retries: 3
+```
+
+### RocketMQ配置
+
+```yaml
+rocketmq:
+  build:
+    context: ./rocketmq
+  container_name: rocketmq
+  volumes:
+    - ./rocketmq/store:/home/rocketmq/store
+    - ./rocketmq/logs:/home/rocketmq/logs
+  ports:
+    - "9876:9876"
+    - "10909:10909"
+    - "10911:10911"
+  user: "rocketmq"
+```
+
+### Producer服务配置
+
+#### 灰度环境Producer
+```yaml
+product_gray:
+  build:
+    context: ./backends
+    dockerfile: producer.Dockerfile
+  container_name: product_gray
+  environment:
+    - NODE_TYPE=GRAY
+    - ROCKETMQ_NAME_SERVER=rocketmq:9876
+    - SPRING_PROFILES_ACTIVE=gray
+    - ZOOKEEPER_CONNECT_STRING=zookeeper:2181
+  ports:
+    - "20881:20880"
+  healthcheck:
+    test: ["CMD", "curl", "-f", "http://localhost:8080/actuator/health"]
+    interval: 10s
+    timeout: 5s
+    retries: 3
+```
+
+#### 生产环境Producer
+```yaml
+product_prd:
+  build:
+    context: ./backends
+    dockerfile: producer.Dockerfile
+  container_name: product_prd
+  environment:
+    - NODE_TYPE=PRD
+    - ROCKETMQ_NAME_SERVER=rocketmq:9876
+    - SPRING_PROFILES_ACTIVE=prd
+    - ZOOKEEPER_CONNECT_STRING=zookeeper:2181
+  ports:
+    - "20882:20880"
+  healthcheck:
+    test: ["CMD", "curl", "-f", "http://localhost:8080/actuator/health"]
+    interval: 10s
+    timeout: 5s
+    retries: 3
 ```
 
 ### Consumer服务配置
@@ -59,27 +129,43 @@ zookeeper:
 #### 灰度环境Consumer
 ```yaml
 consumer_gray:
+  build:
+    context: ./backends
+    dockerfile: consumer.Dockerfile
   container_name: consumer_gray
   ports:
-    - "8081:8081"
+    - "8081:8080"
   environment:
     - NODE_TYPE=GRAY_CONSUMER
     - ROCKETMQ_NAME_SERVER=rocketmq:9876
     - ZOOKEEPER_CONNECT_STRING=zookeeper:2181
     - SPRING_PROFILES_ACTIVE=gray
+  healthcheck:
+    test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+    interval: 10s
+    timeout: 5s
+    retries: 3
 ```
 
 #### 生产环境Consumer
 ```yaml
 consumer_prd:
+  build:
+    context: ./backends
+    dockerfile: consumer.Dockerfile
   container_name: consumer_prd
   ports:
-    - "8082:8081"
+    - "8082:8080"
   environment:
     - NODE_TYPE=PRD_CONSUMER
     - ROCKETMQ_NAME_SERVER=rocketmq:9876
     - ZOOKEEPER_CONNECT_STRING=zookeeper:2181
     - SPRING_PROFILES_ACTIVE=prd
+  healthcheck:
+    test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+    interval: 10s
+    timeout: 5s
+    retries: 3
 ```
 
 ## 部署步骤
@@ -97,6 +183,9 @@ docker-compose --version
 ```bash
 # 构建所有服务镜像
 docker-compose build
+
+# 构建特定服务镜像
+docker-compose build consumer_gray
 ```
 
 ### 3. 启动服务
@@ -110,6 +199,9 @@ docker-compose ps
 
 # 查看服务日志
 docker-compose logs -f
+
+# 启动特定服务
+docker-compose up -d consumer_gray consumer_prd
 ```
 
 ### 4. 验证部署
@@ -122,12 +214,18 @@ docker exec zookeeper zkServer.sh status
 # RocketMQ健康检查
 curl http://localhost:9876
 
+# Producer服务健康检查
+curl http://localhost:8080/actuator/health  # 在容器内
+# 或通过端口映射检查
+curl http://localhost:20881/actuator/health  # 灰度Producer
+curl http://localhost:20882/actuator/health  # 生产Producer
+
 # Consumer服务健康检查
-curl http://localhost:8081/actuator/health
-curl http://localhost:8082/actuator/health
+curl http://localhost:8081/health  # 灰度Consumer
+curl http://localhost:8082/health  # 生产Consumer
 ```
 
-#### 检查ZooKeeper连接
+#### 检查ZooKeeper连接和Elastic-Job注册
 ```bash
 # 连接到ZooKeeper客户端
 docker exec -it zookeeper zkCli.sh
@@ -135,6 +233,14 @@ docker exec -it zookeeper zkCli.sh
 # 在ZooKeeper客户端中执行
 ls /
 get /release/status
+ls /elastic-job-demo  # 检查Elastic-Job注册
+```
+
+#### 验证Elastic-Job调度
+```bash
+# 查看Consumer服务日志中的Elastic-Job执行日志
+docker-compose logs -f consumer_gray | grep "DemoJob"
+docker-compose logs -f consumer_prd | grep "DemoJob"
 ```
 
 ## 服务管理
@@ -181,7 +287,7 @@ docker-compose up -d --scale consumer_gray=2
 # 注意：由于端口冲突，需要修改docker-compose.yml配置
 ```
 
-## 配置管理
+##### 配置管理
 
 ### 环境变量配置
 
@@ -193,13 +299,67 @@ ROCKETMQ_NAME_SERVER=rocketmq:9876
 ZOOKEEPER_CONNECT_STRING=zookeeper:2181
 ROCKETMQ_TOPIC=PRD_TOPIC
 ROCKETMQ_TAG=*
+NODE_TYPE=PRD_CONSUMER
 ```
 
 ### 动态配置更新
 
+#### 使用Spring Cloud Config
 ```bash
+# 刷新配置（需要Spring Cloud Config支持）
+curl -X POST http://localhost:8081/actuator/refresh
+curl -X POST http://localhost:8082/actuator/refresh
+```
+
+#### Elastic-Job配置调整
+Elastic-Job的配置通过Java配置类动态读取，修改application.yml后重启对应服务：
+```bash
+docker-compose restart consumer_gray
+docker-compose restart consumer_prd
+```
+
+### 数据持久化
+
+#### ZooKeeper数据
+- **数据卷**: `zookeeper_data`, `zookeeper_datalog`
+- **挂载路径**: `/data`, `/datalog`
+- **备份命令**: 
+```bash
+docker run --rm -v zookeeper_data:/data -v $(pwd)/backup:/backup alpine tar czf /backup/zookeeper_backup.tar.gz /data
+```
+
+#### RocketMQ数据
+- **数据卷**: `./rocketmq/store`, `./rocketmq/logs`
+- **清理数据**: 
+```bash
+sudo rm -rf rocketmq/store/* rocketmq/logs/*
+```
+
+### 故障排查
+
+#### 常见命令
+```bash
+# 检查容器状态
+docker-compose ps
+
+# 查看容器资源使用
+docker stats
+
+# 进入容器调试
+docker exec -it consumer_gray /bin/sh
+
+# 查看容器IP
+docker inspect consumer_gray | grep IPAddress
+
+# 网络连通性测试
+docker exec consumer_gray ping zookeeper
+docker exec consumer_gray ping rocketmq
+
 # 更新发布状态
-curl -X POST "http://localhost:8081/api/release/state?stateName=灰度发布中"
+curl -X POST "http://localhost:8081/api/release/state?stateName=GRAY_ACCESSABLE"
+curl -X POST "http://localhost:8081/api/release/state?stateName=PROD_ACCESSABLE"
+curl -X POST "http://localhost:8081/api/release/state?stateName=ALL_ACCESSABLE"
+```
 
 # 查看当前状态
 curl "http://localhost:8081/api/release/state"
@@ -226,11 +386,13 @@ curl http://localhost:8082/actuator/health
 curl http://localhost:8081/api/release/states
 
 # 3. 测试状态切换
-curl -X POST "http://localhost:8081/api/release/state?stateName=灰度发布中"
+curl -X POST "http://localhost:8081/api/release/state?state=GRAY_ACCESSABLE"
+curl -X POST "http://localhost:8081/api/release/state?state=PROD_ACCESSABLE"
+curl -X POST "http://localhost:8081/api/release/state?state=ALL_ACCESSABLE"
 
-# 4. 验证消费规则
-curl "http://localhost:8081/api/release/state/灰度发布中/rules"
-curl "http://localhost:8082/api/release/state/灰度发布中/rules"
+# 4. 验证当前状态
+curl "http://localhost:8081/api/release/state"
+curl "http://localhost:8082/api/release/state"
 ```
 
 ## 故障排查

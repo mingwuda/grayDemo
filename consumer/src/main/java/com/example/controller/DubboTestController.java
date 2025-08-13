@@ -20,10 +20,9 @@ public class DubboTestController {
     private DubboConsumerService dubboConsumerService;
 
     @GetMapping("/test")
-    public ResponseEntity<String> testDubboCall(HttpServletRequest request, 
-                                              @RequestParam(required = false, defaultValue = "consumer") String consumerName) {
+    public ResponseEntity<String> testDubboCall(@RequestParam(required = false, defaultValue = "consumer") String consumerName) {
         try {
-            String result = dubboConsumerService.callProviderService(request, consumerName);
+            String result = dubboConsumerService.callProviderService(consumerName);
             return ResponseEntity.ok(result);
         } catch (Exception e) {
             log.error("Error in dubbo test", e);

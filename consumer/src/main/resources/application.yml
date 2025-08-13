@@ -17,6 +17,7 @@ zookeeper:
   session-timeout: 30000
   connection-timeout: 10000
   release-state-path: /release/status
+  elastic-job-namespace: elastic-job-demo
 
 management:
   endpoints:
@@ -36,3 +37,9 @@ dubbo:
     check: false
     timeout: 3000
     retries: 0
+
+job:
+  demo:
+    cron: 0/10 * * * * ?
+    sharding-total-count: 2
+    sharding-item-parameters: 0=A,1=B

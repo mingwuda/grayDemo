@@ -4,3 +4,5 @@ node:
 dubbo:
   protocol:
     port: 20881
+  provider:
+    tag: ""

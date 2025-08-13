@@ -27,14 +27,14 @@ public class DubboRoutingRuleService {
         curatorFramework.start();
         curatorFramework.blockUntilConnected();
 
-        // 设置Dubbo标签路由规则
-        setDubboTagRoutingRule();
+        // 不再自动设置Dubbo标签路由规则
+        // setDubboTagRoutingRule();
     }
 
     private void setDubboTagRoutingRule() throws Exception {
         String path = "/dubbo/config/dubbo/rocketmq-gray-producer.tag-router";
         String rule = "---\n" +
-                "force: false\n" +
+                "force: true\n" +
                 "runtime: true\n" +
                 "enabled: true\n" +
                 "priority: 1\n" +

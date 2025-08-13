@@ -1,17 +1,19 @@
 package com.example.config;
 
-import lombok.Data;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.stereotype.Component;
 
-@Data
 @Component
 @ConfigurationProperties(prefix = "zookeeper")
 public class ZookeeperProperties {
+    
+    private String connectString = "localhost:2181";
 
-    private String connectString;
-    private int sessionTimeout;
-    private int connectionTimeout;
-    private String releaseStatePath;
-    private String elasticJobNamespace;
+    public String getConnectString() {
+        return connectString;
+    }
+
+    public void setConnectString(String connectString) {
+        this.connectString = connectString;
+    }
 }

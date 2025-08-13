@@ -25,11 +25,14 @@ management:
 node:
   type: PRD
 
+zookeeper:
+  connect-string: ${ZOOKEEPER_CONNECT_STRING:localhost:2181}
+
 dubbo:
   application:
     name: ${spring.application.name}
   registry:
-    address: zookeeper://${ZOOKEEPER_CONNECT_STRING:localhost:2181}
+    address: zookeeper://${zookeeper.connect-string}
   protocol:
     name: dubbo
     port: 20880
