@@ -1,0 +1,131 @@
+version: '3.8'
+
+services:
+  nginx:
+    image: docker.xuanyuan.run/library/nginx:1.28.0-alpine-slim
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf
+    ports:
+      - "80:80"
+    depends_on:
+      - product_gray
+      - product_prd
+
+  product_gray:
+    build:
+      context: ./backends
+      dockerfile: producer.Dockerfile
+    container_name: product_gray
+    environment:
+      - NODE_TYPE=GRAY
+      - ROCKETMQ_NAME_SERVER=rocketmq:9876
+      - SPRING_PROFILES_ACTIVE=gray
+      - ZOOKEEPER_CONNECT_STRING=zookeeper:2181
+    ports:
+      - "20881:20880"
+    depends_on:
+      - rocketmq
+      - zookeeper
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/actuator/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  product_prd:
+    build:
+      context: ./backends
+      dockerfile: producer.Dockerfile
+    container_name: product_prd
+    environment:
+      - NODE_TYPE=PRD
+      - ROCKETMQ_NAME_SERVER=rocketmq:9876
+      - SPRING_PROFILES_ACTIVE=prd
+      - ZOOKEEPER_CONNECT_STRING=zookeeper:2181
+    ports:
+      - "20882:20880"
+    depends_on:
+      - rocketmq
+      - zookeeper
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/actuator/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  zookeeper:
+    image: docker.xuanyuan.run/library/zookeeper:latest
+    container_name: zookeeper
+    ports:
+      - "2181:2181"
+    environment:
+      - ZOO_MY_ID=1
+      - ZOO_SERVERS=server.1=0.0.0.0:2888:3888;2181
+    volumes:
+      - zookeeper_data:/data
+      - zookeeper_datalog:/datalog
+    healthcheck:
+      test: ["CMD", "zkServer.sh", "status"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  rocketmq:
+    build:
+      context: ./rocketmq
+    container_name: rocketmq
+    volumes:
+      - ./rocketmq/store:/home/rocketmq/store
+      - ./rocketmq/logs:/home/rocketmq/logs
+    ports:
+      - "9876:9876"
+      - "10909:10909"
+      - "10911:10911"
+    # 确保使用正确的用户
+    user: "rocketmq"
+
+  consumer_gray:
+    build:
+      context: ./backends
+      dockerfile: consumer.Dockerfile
+    container_name: consumer_gray
+    ports:
+      - "8081:8080"
+    environment:
+      - NODE_TYPE=GRAY_CONSUMER
+      - ROCKETMQ_NAME_SERVER=rocketmq:9876
+      - ZOOKEEPER_CONNECT_STRING=zookeeper:2181
+      - SPRING_PROFILES_ACTIVE=gray
+    depends_on:
+      - rocketmq
+      - zookeeper
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  consumer_prd:
+    build:
+      context: ./backends
+      dockerfile: consumer.Dockerfile
+    container_name: consumer_prd
+    ports:
+      - "8082:8080"
+    environment:
+      - NODE_TYPE=PRD_CONSUMER
+      - ROCKETMQ_NAME_SERVER=rocketmq:9876
+      - ZOOKEEPER_CONNECT_STRING=zookeeper:2181
+      - SPRING_PROFILES_ACTIVE=prd
+    depends_on:
+      - rocketmq
+      - zookeeper
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  zookeeper_data:
+  zookeeper_datalog:

@@ -1,0 +1,37 @@
+spring:
+  application:
+    name: rocketmq-gray-producer
+
+rocketmq:
+  name-server: ${ROCKETMQ_NAME_SERVER:localhost:9876}
+  producer:
+    send-message-timeout: 3000
+
+app:
+    topic: ${ROCKETMQ_TOPIC:PRD_TOPIC}
+    tags:
+        production: ${ROCKETMQ_TAG_PRODUCTION:PRD_TAG}
+        gray: ${ROCKETMQ_TAG_GRAY:PRD_TAG}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      show-details: always
+
+node:
+  type: PRD
+
+dubbo:
+  application:
+    name: ${spring.application.name}
+  registry:
+    address: zookeeper://${ZOOKEEPER_CONNECT_STRING:localhost:2181}
+  protocol:
+    name: dubbo
+    port: 20880
+  scan:
+    base-packages: com.example.service

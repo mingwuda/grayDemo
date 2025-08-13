@@ -1,0 +1,6 @@
+node:
+  type: GRAY
+
+dubbo:
+  protocol:
+    port: 20881

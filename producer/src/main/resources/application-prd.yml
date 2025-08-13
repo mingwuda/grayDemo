@@ -1,0 +1,6 @@
+node:
+  type: PRD
+
+dubbo:
+  protocol:
+    port: 20882

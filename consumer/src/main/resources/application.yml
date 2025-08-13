@@ -1,0 +1,38 @@
+spring:
+  application:
+    name: rocketmq-gray-consumer
+
+rocketmq:
+  name-server: ${ROCKETMQ_NAME_SERVER:localhost:9876}
+  consumer:
+    group: ${ROCKETMQ_CONSUMER_GROUP:gray-demo-consumer-group}
+    offset: CONSUME_FROM_LAST_OFFSET
+    message-model: CLUSTERING
+    consume-thread-max: 20
+    topic: ${ROCKETMQ_TOPIC:PRD_TOPIC}
+    tag: ${ROCKETMQ_TAG:*}
+
+zookeeper:
+  connect-string: ${ZOOKEEPER_CONNECT_STRING:localhost:2181}
+  session-timeout: 30000
+  connection-timeout: 10000
+  release-state-path: /release/status
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,refresh
+  endpoint:
+    health:
+      show-details: always
+
+dubbo:
+  application:
+    name: ${spring.application.name}
+  registry:
+    address: zookeeper://${ZOOKEEPER_CONNECT_STRING:localhost:2181}
+  consumer:
+    check: false
+    timeout: 3000
+    retries: 0

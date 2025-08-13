@@ -1,0 +1,5 @@
+node.type: GRAY_CONSUMER
+rocketmq:
+  consumer:
+    group: PRD_CONSUMER_GROUP
+    tag: ${ROCKETMQ_TAG_GRAY:PRD_TAG}
