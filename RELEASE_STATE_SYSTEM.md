@@ -9,7 +9,7 @@
 ### 核心组件
 
 1. **发布状态枚举 (ReleaseState)**
-   - 定义了5种发布状态及其对应的消费规则
+   - 定义了3种发布状态及其对应的消费规则
    - 每种状态明确规定灰度和生产环境是否消费消息
 
 2. **ZooKeeper监听服务 (ReleaseStateService)**
@@ -28,11 +28,13 @@
 
 ## 发布状态定义
 
-| 状态 | 状态名称 | 灰度环境消费 | 生产环境消费 | 使用场景 |
-|------|----------|--------------|--------------|----------|
-| GRAY_ACCESSABLE | 仅灰度可访问 | ✅|  ❌ | 灰度验证中，停止生产消费，仅灰度消费 |
-| PROD_ACCESSABLE | 仅生产可访问 | ❌ | ✅  | 生产验证中，停止灰度消费，仅生产消费 |
-| ALL_ACCESSABLE | 全部可访问 | ✅ | ✅ | 生产发布完成，恢复所有消费 |
+系统定义了3种发布状态，每种状态明确规定了灰度环境和生产环境消费者的消费行为：
+
+| 状态枚举值 | 状态说明 | 灰度环境消费 | 生产环境消费 | 使用场景 |
+|------------|----------|--------------|--------------|----------|
+| GRAY_ACCESSABLE | 仅灰度可访问 | ✅ 消费 | ❌ 不消费 | 灰度验证阶段，仅灰度环境消费消息 |
+| PROD_ACCESSABLE | 仅生产可访问 | ❌ 不消费 | ✅ 消费 | 生产验证阶段，仅生产环境消费消息 |
+| ALL_ACCESSABLE | 全部可访问 | ✅ 消费 | ✅ 消费 | 发布完成，恢复所有环境正常消费 |
 
 ## 配置说明
 
@@ -119,42 +121,26 @@ GET /api/release/state/{stateName}/rules
 
 ### 2. 灰度发布流程
 
-1. **发布前准备**
+1. **仅灰度可访问**
    ```bash
-   curl -X POST "http://localhost:8081/api/release/state?stateName=灰度发布前"
+   curl -X POST "http://localhost:8081/api/release/state?stateName=GRAY_ACCESSABLE"
+   ```
+   - 灰度环境：消费消息 ✅
+   - 生产环境：停止消费 ❌
+
+2. **仅生产可访问**
+   ```bash
+   curl -X POST "http://localhost:8081/api/release/state?stateName=PROD_ACCESSABLE"
+   ```
+   - 灰度环境：停止消费 ❌
+   - 生产环境：消费消息 ✅
+
+3. **全部可访问**
+   ```bash
+   curl -X POST "http://localhost:8081/api/release/state?stateName=ALL_ACCESSABLE"
    ```
    - 灰度环境：消费消息 ✅
    - 生产环境：消费消息 ✅
-
-2. **开始灰度发布**
-   ```bash
-   curl -X POST "http://localhost:8081/api/release/state?stateName=灰度发布中"
-   ```
-   - 灰度环境：停止消费 ❌
-   - 生产环境：继续消费 ✅
-
-3. **灰度发布完成**
-   ```bash
-   curl -X POST "http://localhost:8081/api/release/state?stateName=灰度发版完成"
-   ```
-   - 灰度环境：恢复消费 ✅
-   - 生产环境：继续消费 ✅
-
-### 3. 生产发布流程
-
-1. **生产发布前**
-   ```bash
-   curl -X POST "http://localhost:8081/api/release/state?stateName=生产发版前"
-   ```
-   - 灰度环境：继续消费 ✅
-   - 生产环境：停止消费 ❌
-
-2. **生产发布完成**
-   ```bash
-   curl -X POST "http://localhost:8081/api/release/state?stateName=生产发版完成"
-   ```
-   - 灰度环境：继续消费 ✅
-   - 生产环境：恢复消费 ✅
 
 ## 测试脚本
 
