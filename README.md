@@ -9,10 +9,11 @@
 本系统基于**ZooKeeper集中状态管理**实现多维度灰度控制，通过统一的状态协调机制，在服务发现、消息消费、任务调度三个层面实现精确的灰度发布控制。
 
 #### 1. ZooKeeper中心化状态管理
-- **状态存储**：所有灰度控制状态统一存储在ZooKeeper的`/release/status`节点
+- **状态存储**：所有灰度控制状态统一存储在ZooKeeper的`/release/${serviceName}/status`节点
 - **实时监听**：各节点通过Curator Framework监听状态变化，实现毫秒级响应
 - **原子操作**：状态更新采用原子操作，确保分布式环境下的数据一致性
 - **状态枚举**：支持`GRAY_ACCESSABLE`、`PRD_ACCESSABLE`、`ALL_ACCESSABLE`三种发布状态
+- **服务独立管理**：每个服务实例维护独立的ZooKeeper状态节点，支持服务粒度的灰度控制
 
 #### 2. Dubbo服务灰度控制（基于API实现）
 - **ServiceConfig注入**：通过Spring注入所有ServiceConfig实例
@@ -21,6 +22,7 @@
 - **零侵入实现**：通过ProviderServiceManager根据ZooKeeper状态自动调用ServiceConfig API，无需修改业务代码
 - **精确控制**：支持按节点类型（灰度/生产）精确控制服务可用性
 - **状态跟踪**：实时跟踪服务导出状态，确保状态一致性
+- **独立状态管理**：每个服务实例维护独立的ZooKeeper状态节点，支持服务粒度的灰度控制
 
 #### 3. RocketMQ统一消息队列控制
 - **统一Topic设计**：灰度和生产环境共用`PRD_TOPIC`，确保消息全量一致
@@ -62,8 +64,8 @@
 | nginx | nginx | 80:80 | 负载均衡器 |
 | zookeeper | zookeeper | 2181:2181 | 分布式协调服务 |
 | rocketmq | rocketmq | 9876:9876, 10909:10909, 10911:10911 | 消息队列服务 |
-| product_gray | product_gray | 20881:20880 | 灰度环境生产者 |
-| product_prd | product_prd | 20882:20880 | 生产环境生产者 |
+| rocketmq-gray-producer | rocketmq-gray-producer | 20881:20880 | 灰度环境生产者 |
+| rocketmq-prd-producer | rocketmq-prd-producer | 20882:20880 | 生产环境生产者 |
 | consumer_gray | consumer_gray | 8081:8080 | 灰度环境消费者 |
 | consumer_prd | consumer_prd | 8082:8080 | 生产环境消费者 |
 
@@ -133,16 +135,18 @@ rocketmq:
 
 #### 灰度环境Producer
 ```yaml
-product_gray:
+rocketmq-gray-producer:
   build:
     context: ./backends
     dockerfile: producer.Dockerfile
-  container_name: product_gray
+  container_name: rocketmq-gray-producer
   environment:
     - NODE_TYPE=GRAY
     - ROCKETMQ_NAME_SERVER=rocketmq:9876
     - SPRING_PROFILES_ACTIVE=gray
     - ZOOKEEPER_CONNECT_STRING=zookeeper:2181
+    - ZOOKEEPER_SESSION_TIMEOUT=30000
+    - ZOOKEEPER_CONNECTION_TIMEOUT=10000
   ports:
     - "20881:20880"
   healthcheck:
@@ -154,16 +158,18 @@ product_gray:
 
 #### 生产环境Producer
 ```yaml
-product_prd:
+rocketmq-prd-producer:
   build:
     context: ./backends
     dockerfile: producer.Dockerfile
-  container_name: product_prd
+  container_name: rocketmq-prd-producer
   environment:
     - NODE_TYPE=PRD
     - ROCKETMQ_NAME_SERVER=rocketmq:9876
     - SPRING_PROFILES_ACTIVE=prd
     - ZOOKEEPER_CONNECT_STRING=zookeeper:2181
+    - ZOOKEEPER_SESSION_TIMEOUT=30000
+    - ZOOKEEPER_CONNECTION_TIMEOUT=10000
   ports:
     - "20882:20880"
   healthcheck:
@@ -188,6 +194,8 @@ consumer_gray:
     - NODE_TYPE=GRAY_CONSUMER
     - ROCKETMQ_NAME_SERVER=rocketmq:9876
     - ZOOKEEPER_CONNECT_STRING=zookeeper:2181
+    - ZOOKEEPER_SESSION_TIMEOUT=30000
+    - ZOOKEEPER_CONNECTION_TIMEOUT=10000
     - SPRING_PROFILES_ACTIVE=gray
   healthcheck:
     test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
@@ -209,6 +217,8 @@ consumer_prd:
     - NODE_TYPE=PRD_CONSUMER
     - ROCKETMQ_NAME_SERVER=rocketmq:9876
     - ZOOKEEPER_CONNECT_STRING=zookeeper:2181
+    - ZOOKEEPER_SESSION_TIMEOUT=30000
+    - ZOOKEEPER_CONNECTION_TIMEOUT=10000
     - SPRING_PROFILES_ACTIVE=prd
   healthcheck:
     test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
@@ -346,6 +356,8 @@ docker-compose up -d --scale consumer_gray=2
 # .env文件示例
 ROCKETMQ_NAME_SERVER=rocketmq:9876
 ZOOKEEPER_CONNECT_STRING=zookeeper:2181
+ZOOKEEPER_SESSION_TIMEOUT=30000
+ZOOKEEPER_CONNECTION_TIMEOUT=10000
 ROCKETMQ_TOPIC=PRD_TOPIC
 ROCKETMQ_TAG=*
 NODE_TYPE=PRD_CONSUMER
@@ -404,17 +416,67 @@ docker inspect consumer_gray | grep IPAddress
 docker exec consumer_gray ping zookeeper
 docker exec consumer_gray ping rocketmq
 
-# 更新发布状态（基于服务名）
+# 服务独立状态管理API
+
+## 基于服务名的状态管理（推荐）
+
+### 获取所有已注册的服务
+```bash
+curl http://localhost:8081/api/service-release/services
+```
+
+### 获取特定服务的当前状态
+```bash
+curl http://localhost:8081/api/service-release/{serviceName}/state
+```
+
+### 更新特定服务的发布状态
+```bash
 curl -X POST "http://localhost:8081/api/service-release/{serviceName}/state?stateName=GRAY_ACCESSABLE"
 curl -X POST "http://localhost:8081/api/service-release/{serviceName}/state?stateName=PROD_ACCESSABLE"
 curl -X POST "http://localhost:8081/api/service-release/{serviceName}/state?stateName=ALL_ACCESSABLE"
+```
 
-# 查看当前状态（基于服务名）
-curl "http://localhost:8081/api/service-release/{serviceName}/state"
-curl "http://localhost:8082/api/service-release/{serviceName}/state"
+### 获取服务状态概览
+```bash
+curl http://localhost:8081/api/service-release/overview
+```
 
-# 示例：更新gray-demo-consumer服务的状态
-curl -X POST "http://localhost:8081/api/service-release/gray-demo-consumer/state?stateName=GRAY_ACCESSABLE"
+### 获取特定状态下的规则
+```bash
+curl http://localhost:8081/api/service-release/{serviceName}/state/{stateName}/rules
+```
+
+## 实际服务示例
+
+### 使用rocketmq-gray-producer服务
+```bash
+# 查看服务状态
+curl http://localhost:8081/api/service-release/rocketmq-gray-producer/state
+
+# 更新为灰度模式
+curl -X POST "http://localhost:8081/api/service-release/rocketmq-gray-producer/state?stateName=GRAY_ACCESSABLE"
+
+# 更新为生产模式
+curl -X POST "http://localhost:8081/api/service-release/rocketmq-gray-producer/state?stateName=PROD_ACCESSABLE"
+
+# 更新为全量模式
+curl -X POST "http://localhost:8081/api/service-release/rocketmq-gray-producer/state?stateName=ALL_ACCESSABLE"
+
+# 查看服务概览
+curl http://localhost:8081/api/service-release/overview
+```
+
+## 兼容旧版API（已弃用）
+```bash
+# 查看全局状态（不推荐）
+curl http://localhost:8081/api/release/state
+curl http://localhost:8082/api/release/state
+
+# 更新全局状态（不推荐）
+curl -X POST "http://localhost:8081/api/release/state?stateName=GRAY_ACCESSABLE"
+curl -X POST "http://localhost:8082/api/release/state?stateName=GRAY_ACCESSABLE"
+```
 ```
 
 ## 测试验证
@@ -424,32 +486,40 @@ curl -X POST "http://localhost:8081/api/service-release/gray-demo-consumer/state
 ```bash
 # 运行Docker环境测试脚本
 ./test-docker-release-state.sh
+
+# 运行服务独立状态测试脚本
+./test-release-state.sh
 ```
 
-### 手动测试
+### 手动测试 - 服务独立状态管理
 
 ```bash
-# 1. 检查服务状态
-curl http://localhost:8081/actuator/health
-curl http://localhost:8082/actuator/health
+# 1. 检查服务健康状态
+curl http://localhost:8081/health
+curl http://localhost:8082/health
 
 # 2. 获取所有已注册的服务
 curl http://localhost:8081/api/service-release/services
 
-# 3. 测试状态切换（基于服务名）
-curl -X POST "http://localhost:8081/api/service-release/{serviceName}/state?stateName=GRAY_ACCESSABLE"
-curl -X POST "http://localhost:8081/api/service-release/{serviceName}/state?stateName=PROD_ACCESSABLE"
-curl -X POST "http://localhost:8081/api/service-release/{serviceName}/state?stateName=ALL_ACCESSABLE"
+# 3. 使用实际服务名进行测试（rocketmq-gray-producer）
 
-# 4. 验证当前状态（基于服务名）
-curl "http://localhost:8081/api/service-release/{serviceName}/state"
-curl "http://localhost:8082/api/service-release/{serviceName}/state"
+# 查看当前状态
+curl http://localhost:8081/api/service-release/rocketmq-gray-producer/state
 
-# 5. 获取服务状态概览
-curl "http://localhost:8081/api/service-release/overview"
+# 测试状态切换
+curl -X POST "http://localhost:8081/api/service-release/rocketmq-gray-producer/state?stateName=GRAY_ACCESSABLE"
+curl -X POST "http://localhost:8081/api/service-release/rocketmq-gray-producer/state?stateName=PROD_ACCESSABLE"
+curl -X POST "http://localhost:8081/api/service-release/rocketmq-gray-producer/state?stateName=ALL_ACCESSABLE"
 
-# 6. 获取特定状态下的规则
-curl "http://localhost:8081/api/service-release/{serviceName}/state/{stateName}/rules"
+# 4. 验证状态同步
+curl http://localhost:8081/api/service-release/rocketmq-gray-producer/state
+curl http://localhost:8082/api/service-release/rocketmq-gray-producer/state
+
+# 5. 获取服务概览
+curl http://localhost:8081/api/service-release/overview
+
+# 6. 通过ZooKeeper CLI验证状态同步
+docker-compose exec zookeeper zkCli.sh get /release/rocketmq-gray-producer/status
 ```
 
 ## 故障排查
@@ -468,6 +538,9 @@ docker-compose logs service_name
 # 检查端口占用
 netstat -tulpn | grep :2181
 netstat -tulpn | grep :9876
+
+# 检查ZooKeeper连接超时配置
+docker exec consumer_gray env | grep ZOOKEEPER
 ```
 
 #### 2. ZooKeeper连接失败
@@ -481,6 +554,24 @@ docker exec consumer_gray ping zookeeper
 
 # 查看ZooKeeper日志
 docker-compose logs zookeeper
+
+# 检查Curator连接超时问题（CuratorConnectionLossException）
+# 解决方案：增加ZOOKEEPER_CONNECTION_TIMEOUT到30000ms
+```
+
+#### 3. 服务独立状态管理问题
+
+```bash
+# 检查ZooKeeper状态节点是否存在
+docker-compose exec zookeeper zkCli.sh ls /release
+docker-compose exec zookeeper zkCli.sh get /release/rocketmq-gray-producer/status
+
+# 验证API接口
+nc -zv localhost 8081
+nc -zv localhost 8082
+
+# 检查服务注册状态
+curl http://localhost:8081/api/service-release/services
 ```
 
 #### 3. RocketMQ连接失败

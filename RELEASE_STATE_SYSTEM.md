@@ -17,6 +17,7 @@
    - 支持每个微服务独立的状态管理
    - 提供按服务名的状态查询和更新功能
    - 通知消费服务状态变化
+   - ZooKeeper路径格式: `/release/{serviceName}/status`
 
 3. **消息消费服务 (MQConsumerService)**
    - 手动管理RocketMQ消费者生命周期
@@ -27,6 +28,15 @@
    - 提供REST API进行服务独立的状态查询和更新
    - 支持获取所有注册服务
    - 支持获取特定服务的状态规则和概览
+
+### 容器化部署架构
+
+- **ZooKeeper**: 独立容器，端口2181
+- **RocketMQ**: 独立容器，NameServer端口9876
+- **Consumer服务**: 
+  - 灰度环境容器: consumer_gray (端口8081:8080)
+  - 生产环境容器: consumer_prd (端口8082:8080)
+- **Producer服务**: 独立容器提供消息生产服务
 
 ## 发布状态定义
 
@@ -45,10 +55,10 @@
 ```yaml
 zookeeper:
   connect-string: localhost:2181
-  session-timeout: 60000
-  connection-timeout: 15000
+  session-timeout: 30000
+  connection-timeout: 30000
   # 服务独立的状态路径格式
-  release-state-path: /gray-demo/services/{serviceName}/release-state
+  release-state-path: /release/{serviceName}/status
 ```
 
 ### RocketMQ配置
@@ -131,21 +141,21 @@ GET /api/service-release/overview
 
 1. **仅灰度可访问**
    ```bash
-   curl -X POST "http://localhost:8081/api/service-release/gray-demo-consumer/state?stateName=GRAY_ACCESSABLE"
+   curl -X POST "http://localhost:8081/api/service-release/rocketmq-gray-producer/state?stateName=GRAY_ACCESSABLE"
    ```
    - 灰度环境：消费消息 ✅
    - 生产环境：停止消费 ❌
 
 2. **仅生产可访问**
    ```bash
-   curl -X POST "http://localhost:8081/api/service-release/gray-demo-consumer/state?stateName=PROD_ACCESSABLE"
+   curl -X POST "http://localhost:8081/api/service-release/rocketmq-gray-producer/state?stateName=PROD_ACCESSABLE"
    ```
    - 灰度环境：停止消费 ❌
    - 生产环境：消费消息 ✅
 
 3. **全部可访问**
    ```bash
-   curl -X POST "http://localhost:8081/api/service-release/gray-demo-consumer/state?stateName=ALL_ACCESSABLE"
+   curl -X POST "http://localhost:8081/api/service-release/rocketmq-gray-producer/state?stateName=ALL_ACCESSABLE"
    ```
    - 灰度环境：消费消息 ✅
    - 生产环境：消费消息 ✅
@@ -188,7 +198,8 @@ Docker环境提供了专门的测试脚本 `test-docker-release-state.sh`，测�
 
 #### Docker环境API端点（服务独立）
 - **服务独立API格式**: http://localhost:8081/api/service-release/{serviceName}
-- **服务名示例**: gray-demo-consumer
+- **实际服务名**: rocketmq-gray-producer
+- **容器内部端口**: 8080 (映射到外部8081)
 - **ZooKeeper**: localhost:2181
 - **RocketMQ**: localhost:9876
 
@@ -198,13 +209,22 @@ Docker环境提供了专门的测试脚本 `test-docker-release-state.sh`，测�
 curl http://localhost:8081/api/service-release/services
 
 # 查看特定服务状态
-curl http://localhost:8081/api/service-release/gray-demo-consumer/state
+curl http://localhost:8081/api/service-release/rocketmq-gray-producer/state
 
 # 更新特定服务状态
-curl -X POST "http://localhost:8081/api/service-release/gray-demo-consumer/state?stateName=GRAY_ACCESSABLE"
+curl -X POST "http://localhost:8081/api/service-release/rocketmq-gray-producer/state?stateName=GRAY_ACCESSABLE"
+curl -X POST "http://localhost:8081/api/service-release/rocketmq-gray-producer/state?stateName=PROD_ACCESSABLE"
+curl -X POST "http://localhost:8081/api/service-release/rocketmq-gray-producer/state?stateName=ALL_ACCESSABLE"
 
 # 查看服务概览
 curl http://localhost:8081/api/service-release/overview
+
+# 通过ZooKeeper CLI验证状态
+# 查看当前状态
+docker-compose exec zookeeper zkCli.sh get /release/rocketmq-gray-producer/status
+
+# 手动设置状态
+docker-compose exec zookeeper zkCli.sh set /release/rocketmq-gray-producer/status "GRAY_ACCESSABLE"
 ```
 
 ## 监控和日志
@@ -230,6 +250,7 @@ curl http://localhost:8081/api/service-release/overview
    - 检查ZooKeeper服务状态
    - 验证连接字符串配置
    - 检查网络连通性
+   - **连接超时问题**: 增加connection-timeout配置到30000ms以上
 
 2. **消费者启动失败**
    - 检查RocketMQ服务状态
@@ -240,6 +261,12 @@ curl http://localhost:8081/api/service-release/overview
    - 检查ZooKeeper节点权限
    - 验证状态名称拼写
    - 查看服务日志
+   - **CuratorConnectionLossException**: 通常是连接超时导致，需要调整ZooKeeper配置
+
+4. **RocketMQ连接问题**
+   - 检查NameServer地址配置
+   - 验证RocketMQ服务是否正常运行
+   - 检查网络防火墙设置
 
 ### 日志级别配置
 
