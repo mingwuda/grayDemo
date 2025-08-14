@@ -33,6 +33,7 @@ dubbo:
     name: ${spring.application.name}
   registry:
     address: zookeeper://${zookeeper.connect-string}
+    register: true
   protocol:
     name: dubbo
     port: 20880

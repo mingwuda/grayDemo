@@ -8,7 +8,7 @@ import org.springframework.stereotype.Service;
 @Service
 public class DubboConsumerService {
 
-    @DubboReference(version = "1.0.0", group = "gray-demo", check = false, tag = "*")
+    @DubboReference(version = "1.0.0", group = "gray-demo", check = false)
     private DubboDemoService dubboDemoService;
 
     public String callProviderService(String consumerName) {

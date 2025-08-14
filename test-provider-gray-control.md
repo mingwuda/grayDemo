@@ -1,7 +1,13 @@
 # Provider端灰度控制验证方案
 
 ## 验证目标
-验证Provider端通过Zookeeper控制服务注册/下线的灰度控制机制是否正常工作。
+验证Provider端通过Dubbo API控制服务注册/下线的灰度控制机制是否正常工作。
+
+## 实现机制更新
+从Zookeeper路径控制切换到了Dubbo原生API控制：
+- 使用`ServiceConfig.export()`/`unexport()`API控制服务上下线
+- 不再依赖Zookeeper的`/dubbo/service-status`路径
+- 通过`ProviderServiceManager`监听`/release/status`状态变化，直接控制Dubbo服务生命周期
 
 ## 验证步骤
 
@@ -169,24 +175,31 @@ echo "=== 验证完成 ==="
 
 如果验证失败，检查以下方面：
 
-1. **检查Zookeeper连接**
+1. **检查provider日志**
 ```bash
-docker exec -it zookeeper /bin/bash
-zkCli.sh -server localhost:2181 ls /
+docker-compose logs product_gray | grep -i "register\|unregister\|export\|unexport"
+docker-compose logs product_prd | grep -i "register\|unregister\|export\|unexport"
 ```
 
-2. **检查provider日志**
-```bash
-docker-compose logs product_gray | grep -i "register\|unregister"
-docker-compose logs product_prd | grep -i "register\|unregister"
-```
-
-3. **手动验证Dubbo服务**
+2. **检查Dubbo服务状态**
 ```bash
 # 使用telnet测试Dubbo端口
-telnet localhost 20881
-telnet localhost 20882
+telnet localhost 20881  # 灰度服务端口
+telnet localhost 20882  # 生产服务端口
 ```
 
-4. **检查状态监听器**
-确保`ProviderServiceManager`中的状态监听器正常工作，可以通过查看provider日志确认。
+3. **检查Zookeeper状态监听**
+```bash
+docker exec -it zookeeper /bin/bash
+zkCli.sh -server localhost:2181 get /release/status
+```
+
+4. **检查Dubbo注册中心**
+```bash
+# 查看Dubbo服务注册情况
+docker exec -it zookeeper /bin/bash
+zkCli.sh -server localhost:2181 ls /dubbo/com.example.service.DubboDemoService/providers
+```
+
+5. **检查ServiceConfig注入**
+确保`ProviderServiceManager`中正确注入了`ServiceConfig`列表，可以通过查看启动日志确认。

@@ -26,19 +26,42 @@ check_service() {
     fi
 }
 
-# 测试provider可用性
-test_provider() {
-    local port=$1
-    local name=$2
+# 检查Dubbo服务注册状态
+check_dubbo_registry() {
+    local service_name=$1
+    local expected_port=$2
+    local should_exist=$3
     
-    response=$(curl -s -w "%{http_code}" "http://localhost:$port/api/dubbo/test?consumerName=test-$name" -o /dev/null 2>/dev/null || echo "000")
-    
-    if [ "$response" = "200" ]; then
-        green "✅ $name Provider (端口 $port) 服务可用"
-        return 0
-    else
-        red "❌ $name Provider (端口 $port) 服务不可用 (HTTP $response)"
+    # 获取Zookeeper容器ID
+    ZK_CONTAINER=$(docker ps --filter "name=zookeeper" --format "{{.ID}}")
+    if [ -z "$ZK_CONTAINER" ]; then
+        red "❌ 无法找到Zookeeper容器"
         return 1
+    fi
+    
+    # 检查服务注册信息
+    registry_output=$(docker exec "$ZK_CONTAINER" zkCli.sh ls /dubbo/com.example.service.DubboDemoService/providers 2>/dev/null || echo "")
+    
+    # 解码URL并检查端口
+    decoded_output=$(echo "$registry_output" | sed 's/%3A/:/g' | sed 's/%2F/\//g' | sed 's/%3F/?/g' | sed 's/%26/\&/g' | sed 's/%3D/=/g')
+    
+    # 检查是否包含指定的端口
+    if echo "$decoded_output" | grep -q ":$expected_port"; then
+        if [ "$should_exist" = "true" ]; then
+            green "✅ $service_name Provider (端口: $expected_port) 已注册到Dubbo"
+            return 0
+        else
+            red "❌ $service_name Provider (端口: $expected_port) 应该下线但仍在注册表中"
+            return 1
+        fi
+    else
+        if [ "$should_exist" = "false" ]; then
+            green "✅ $service_name Provider (端口: $expected_port) 已从Dubbo注销"
+            return 0
+        else
+            red "❌ $service_name Provider (端口: $expected_port) 应该上线但未在注册表中"
+            return 1
+        fi
     fi
 }
 
@@ -66,18 +89,18 @@ verify_state_switch() {
     
     yellow "验证状态: $state"
     
-    # 验证灰度provider
+    # 验证灰度provider (端口20881)
     if [ "$gray_expected" = "available" ]; then
-        test_provider 8081 "gray" || return 1
+        check_dubbo_registry "灰度" "20881" "true" || return 1
     else
-        test_provider 8081 "gray" && { red "灰度provider应该下线"; return 1; } || true
+        check_dubbo_registry "灰度" "20881" "false" || return 1
     fi
     
-    # 验证生产provider
+    # 验证生产provider (端口20882)
     if [ "$prd_expected" = "available" ]; then
-        test_provider 8082 "prd" || return 1
+        check_dubbo_registry "生产" "20882" "true" || return 1
     else
-        test_provider 8082 "prd" && { red "生产provider应该下线"; return 1; } || true
+        check_dubbo_registry "生产" "20882" "false" || return 1
     fi
     
     green "✅ $state 状态验证通过"
@@ -118,14 +141,15 @@ main() {
     green "总结: 所有状态切换验证通过，Provider端灰度控制工作正常"
 }
 
-# 检查curl和nc命令
+# 检查curl命令
 if ! command -v curl &> /dev/null; then
     red "错误: 需要安装curl"
     exit 1
 fi
 
-if ! command -v nc &> /dev/null; then
-    red "错误: 需要安装nc (netcat)"
+# 检查docker命令
+if ! command -v docker &> /dev/null; then
+    red "错误: 需要安装docker"
     exit 1
 fi
 

@@ -14,13 +14,13 @@
 - **原子操作**：状态更新采用原子操作，确保分布式环境下的数据一致性
 - **状态枚举**：支持`GRAY_ACCESSABLE`、`PRD_ACCESSABLE`、`ALL_ACCESSABLE`三种发布状态
 
-#### 2. Dubbo服务灰度控制
-- **服务分组隔离**：
-  - 灰度生产者：`@DubboService(group="gray-demo", version="1.0.0")`
-  - 生产生产者：`@DubboService(group="prd-demo", version="1.0.0")`
-- **动态服务注册**：生产者节点根据ZooKeeper状态动态决定是否向注册中心注册服务
-- **消费者路由**：消费者通过指定group参数精确路由到目标环境的服务
-- **零侵入实现**：基于Spring Bean的生命周期和ZooKeeper监听实现，无需修改业务代码
+#### 2. Dubbo服务灰度控制（基于API实现）
+- **ServiceConfig注入**：通过Spring注入所有ServiceConfig实例
+- **动态服务注册**：生产者节点使用ServiceConfig的export/unexport方法直接控制服务注册/注销
+- **API级控制**：基于Dubbo原生ServiceConfig API实现服务上下线，无需依赖ZooKeeper路径操作
+- **零侵入实现**：通过ProviderServiceManager根据ZooKeeper状态自动调用ServiceConfig API，无需修改业务代码
+- **精确控制**：支持按节点类型（灰度/生产）精确控制服务可用性
+- **状态跟踪**：实时跟踪服务导出状态，确保状态一致性
 
 #### 3. RocketMQ统一消息队列控制
 - **统一Topic设计**：灰度和生产环境共用`PRD_TOPIC`，确保消息全量一致
@@ -38,7 +38,7 @@
 - **弹性扩缩容**：支持动态增加灰度或生产节点，自动平衡任务负载
 
 #### 5. 多维度灰度协同
-- **服务维度**：通过Dubbo group实现服务级别的流量隔离
+- **服务维度**：通过Dubbo ServiceConfig API实现服务级别的灰度控制
 - **消息维度**：通过消费者组实现消息消费的精确控制
 - **任务维度**：通过Elastic-Job分片实现任务调度的灰度验证
 - **配置维度**：通过Spring Profile实现环境特定的配置隔离
