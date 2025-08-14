@@ -1,7 +1,7 @@
 package com.example.controller;
 
 import com.example.service.MQConsumerService;
-import com.example.service.ReleaseStateService;
+import com.example.service.ServiceAwareReleaseStateService;
 import com.example.enums.ReleaseState;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
@@ -19,10 +19,13 @@ public class HealthController {
     private MQConsumerService mqConsumerService;
     
     @Autowired
-    private ReleaseStateService releaseStateService;
+    private ServiceAwareReleaseStateService releaseStateService;
     
     @Value("${node.type:GRAY_CONSUMER}")
     private String nodeType;
+    
+    @Value("${spring.application.name:default-service}")
+    private String serviceName;
 
     @GetMapping("/health")
     public ResponseEntity<Map<String, Object>> healthCheck() {
@@ -30,7 +33,7 @@ public class HealthController {
         
         try {
             // 获取当前发布状态
-            ReleaseState currentState = releaseStateService.getCurrentReleaseState();
+            ReleaseState currentState = releaseStateService.getServiceReleaseState(serviceName);
             boolean shouldConsume = currentState.shouldConsume(nodeType);
             boolean isConsumerStarted = mqConsumerService.isConsumerStarted();
             

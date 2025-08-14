@@ -15,8 +15,8 @@ rocketmq:
 zookeeper:
   connect-string: ${ZOOKEEPER_CONNECT_STRING:localhost:2181}
   session-timeout: 30000
-  connection-timeout: 10000
-  release-state-path: /release/status
+  connection-timeout: 30000
+  release-state-path: /release
   elastic-job-namespace: elastic-job-demo
 
 management:

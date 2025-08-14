@@ -12,19 +12,21 @@
    - 定义了3种发布状态及其对应的消费规则
    - 每种状态明确规定灰度和生产环境是否消费消息
 
-2. **ZooKeeper监听服务 (ReleaseStateService)**
-   - 连接ZooKeeper并监听发布状态节点变化
-   - 提供状态查询和更新功能
+2. **服务感知ZooKeeper监听服务 (ServiceAwareReleaseStateService)**
+   - 连接ZooKeeper并监听服务独立的发布状态节点变化
+   - 支持每个微服务独立的状态管理
+   - 提供按服务名的状态查询和更新功能
    - 通知消费服务状态变化
 
 3. **消息消费服务 (MQConsumerService)**
    - 手动管理RocketMQ消费者生命周期
-   - 根据节点类型和发布状态动态启停消费者
-   - 监听状态变化事件
+   - 根据服务名、节点类型和发布状态动态启停消费者
+   - 监听服务特定的状态变化事件
 
-4. **状态管理控制器 (ReleaseStateController)**
-   - 提供REST API进行状态查询和更新
-   - 支持获取消费规则信息
+4. **服务感知状态管理控制器 (ServiceAwareReleaseStateController)**
+   - 提供REST API进行服务独立的状态查询和更新
+   - 支持获取所有注册服务
+   - 支持获取特定服务的状态规则和概览
 
 ## 发布状态定义
 
@@ -45,7 +47,8 @@ zookeeper:
   connect-string: localhost:2181
   session-timeout: 60000
   connection-timeout: 15000
-  release-state-path: /gray-demo/release-state
+  # 服务独立的状态路径格式
+  release-state-path: /gray-demo/services/{serviceName}/release-state
 ```
 
 ### RocketMQ配置
@@ -69,26 +72,31 @@ node:
   type: GRAY_CONSUMER  # 或 PROD_CONSUMER
 ```
 
-## API接口
+## API接口（服务独立版本）
 
-### 1. 获取当前发布状态
+### 1. 获取指定服务的当前发布状态
 ```bash
-GET /api/release/state
+GET /api/service-release/{serviceName}/state
 ```
 
-### 2. 更新发布状态
+### 2. 更新指定服务的发布状态
 ```bash
-POST /api/release/state?stateName=灰度发布中
+POST /api/service-release/{serviceName}/state?stateName=GRAY_ACCESSABLE
 ```
 
-### 3. 获取所有可用状态
+### 3. 获取所有已注册的服务
 ```bash
-GET /api/release/states
+GET /api/service-release/services
 ```
 
-### 4. 获取状态消费规则
+### 4. 获取指定服务的状态消费规则
 ```bash
-GET /api/release/state/{stateName}/rules
+GET /api/service-release/{serviceName}/state/{stateName}/rules
+```
+
+### 5. 获取所有服务的状态概览
+```bash
+GET /api/service-release/overview
 ```
 
 ## 使用流程
@@ -119,28 +127,48 @@ GET /api/release/state/{stateName}/rules
    docker-compose logs -f consumer_prd
    ```
 
-### 2. 灰度发布流程
+### 2. 灰度发布流程（服务独立）
 
 1. **仅灰度可访问**
    ```bash
-   curl -X POST "http://localhost:8081/api/release/state?stateName=GRAY_ACCESSABLE"
+   curl -X POST "http://localhost:8081/api/service-release/gray-demo-consumer/state?stateName=GRAY_ACCESSABLE"
    ```
    - 灰度环境：消费消息 ✅
    - 生产环境：停止消费 ❌
 
 2. **仅生产可访问**
    ```bash
-   curl -X POST "http://localhost:8081/api/release/state?stateName=PROD_ACCESSABLE"
+   curl -X POST "http://localhost:8081/api/service-release/gray-demo-consumer/state?stateName=PROD_ACCESSABLE"
    ```
    - 灰度环境：停止消费 ❌
    - 生产环境：消费消息 ✅
 
 3. **全部可访问**
    ```bash
-   curl -X POST "http://localhost:8081/api/release/state?stateName=ALL_ACCESSABLE"
+   curl -X POST "http://localhost:8081/api/service-release/gray-demo-consumer/state?stateName=ALL_ACCESSABLE"
    ```
    - 灰度环境：消费消息 ✅
    - 生产环境：消费消息 ✅
+
+### 3. 多服务管理
+
+系统现在支持多个微服务独立管理，每个服务都有自己的发布状态：
+
+1. **查看所有服务**
+   ```bash
+   curl http://localhost:8081/api/service-release/services
+   ```
+
+2. **查看服务概览**
+   ```bash
+   curl http://localhost:8081/api/service-release/overview
+   ```
+
+3. **为不同服务设置不同状态**
+   ```bash
+   curl -X POST "http://localhost:8081/api/service-release/service-a/state?stateName=GRAY_ACCESSABLE"
+   curl -X POST "http://localhost:8081/api/service-release/service-b/state?stateName=PROD_ACCESSABLE"
+   ```
 
 ## 测试脚本
 
@@ -158,11 +186,26 @@ Docker环境提供了专门的测试脚本 `test-docker-release-state.sh`，测�
 ./test-docker-release-state.sh
 ```
 
-#### Docker环境API端点
-- **灰度Consumer API**: http://localhost:8081/api/release
-- **生产Consumer API**: http://localhost:8082/api/release
+#### Docker环境API端点（服务独立）
+- **服务独立API格式**: http://localhost:8081/api/service-release/{serviceName}
+- **服务名示例**: gray-demo-consumer
 - **ZooKeeper**: localhost:2181
 - **RocketMQ**: localhost:9876
+
+#### 示例命令
+```bash
+# 查看所有服务
+curl http://localhost:8081/api/service-release/services
+
+# 查看特定服务状态
+curl http://localhost:8081/api/service-release/gray-demo-consumer/state
+
+# 更新特定服务状态
+curl -X POST "http://localhost:8081/api/service-release/gray-demo-consumer/state?stateName=GRAY_ACCESSABLE"
+
+# 查看服务概览
+curl http://localhost:8081/api/service-release/overview
+```
 
 ## 监控和日志
 

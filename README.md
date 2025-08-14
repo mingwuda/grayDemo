@@ -404,15 +404,17 @@ docker inspect consumer_gray | grep IPAddress
 docker exec consumer_gray ping zookeeper
 docker exec consumer_gray ping rocketmq
 
-# 更新发布状态
-curl -X POST "http://localhost:8081/api/release/state?stateName=GRAY_ACCESSABLE"
-curl -X POST "http://localhost:8081/api/release/state?stateName=PROD_ACCESSABLE"
-curl -X POST "http://localhost:8081/api/release/state?stateName=ALL_ACCESSABLE"
-```
+# 更新发布状态（基于服务名）
+curl -X POST "http://localhost:8081/api/service-release/{serviceName}/state?stateName=GRAY_ACCESSABLE"
+curl -X POST "http://localhost:8081/api/service-release/{serviceName}/state?stateName=PROD_ACCESSABLE"
+curl -X POST "http://localhost:8081/api/service-release/{serviceName}/state?stateName=ALL_ACCESSABLE"
 
-# 查看当前状态
-curl "http://localhost:8081/api/release/state"
-curl "http://localhost:8082/api/release/state"
+# 查看当前状态（基于服务名）
+curl "http://localhost:8081/api/service-release/{serviceName}/state"
+curl "http://localhost:8082/api/service-release/{serviceName}/state"
+
+# 示例：更新gray-demo-consumer服务的状态
+curl -X POST "http://localhost:8081/api/service-release/gray-demo-consumer/state?stateName=GRAY_ACCESSABLE"
 ```
 
 ## 测试验证
@@ -431,17 +433,23 @@ curl "http://localhost:8082/api/release/state"
 curl http://localhost:8081/actuator/health
 curl http://localhost:8082/actuator/health
 
-# 2. 获取可用状态
-curl http://localhost:8081/api/release/states
+# 2. 获取所有已注册的服务
+curl http://localhost:8081/api/service-release/services
 
-# 3. 测试状态切换
-curl -X POST "http://localhost:8081/api/release/state?state=GRAY_ACCESSABLE"
-curl -X POST "http://localhost:8081/api/release/state?state=PROD_ACCESSABLE"
-curl -X POST "http://localhost:8081/api/release/state?state=ALL_ACCESSABLE"
+# 3. 测试状态切换（基于服务名）
+curl -X POST "http://localhost:8081/api/service-release/{serviceName}/state?stateName=GRAY_ACCESSABLE"
+curl -X POST "http://localhost:8081/api/service-release/{serviceName}/state?stateName=PROD_ACCESSABLE"
+curl -X POST "http://localhost:8081/api/service-release/{serviceName}/state?stateName=ALL_ACCESSABLE"
 
-# 4. 验证当前状态
-curl "http://localhost:8081/api/release/state"
-curl "http://localhost:8082/api/release/state"
+# 4. 验证当前状态（基于服务名）
+curl "http://localhost:8081/api/service-release/{serviceName}/state"
+curl "http://localhost:8082/api/service-release/{serviceName}/state"
+
+# 5. 获取服务状态概览
+curl "http://localhost:8081/api/service-release/overview"
+
+# 6. 获取特定状态下的规则
+curl "http://localhost:8081/api/service-release/{serviceName}/state/{stateName}/rules"
 ```
 
 ## 故障排查

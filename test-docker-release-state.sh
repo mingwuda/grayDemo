@@ -3,8 +3,10 @@
 # Docker环境下的发布状态管理系统测试
 # 确保docker-compose服务正在运行
 
-GRAY_CONSUMER_URL="http://localhost:8081/api/release"
-PROD_CONSUMER_URL="http://localhost:8082/api/release"
+# 服务名配置（根据实际情况修改）
+SERVICE_NAME="gray-demo-consumer"
+GRAY_CONSUMER_URL="http://localhost:8081/api/service-release/${SERVICE_NAME}"
+PROD_CONSUMER_URL="http://localhost:8082/api/service-release/${SERVICE_NAME}"
 
 echo "=== Docker环境发布状态管理系统测试 (3种状态版本) ==="
 echo
@@ -23,9 +25,9 @@ curl -s "http://localhost:8082/actuator/health"  .
 echo
 echo
 
-# 2. 获取所有可用状态（从灰度环境）
-echo "2. 获取所有可用状态:"
-curl -s "$GRAY_CONSUMER_URL/states"  .
+# 2. 获取所有已注册的服务
+echo "2. 获取所有已注册的服务:"
+curl -s "http://localhost:8081/api/service-release/services" .
 echo
 echo
 
@@ -106,7 +108,7 @@ echo
 echo "=== Docker环境测试完成 ==="
 echo
 echo "提示："
-echo "- 灰度Consumer API: http://localhost:8081/api/release"
-echo "- 生产Consumer API: http://localhost:8082/api/release"
+echo "- 服务独立API格式: http://localhost:8081/api/service-release/{serviceName}"
+echo "- 服务名示例: gray-demo-consumer"
 echo "- ZooKeeper: localhost:2181"
 echo "- RocketMQ: localhost:9876"

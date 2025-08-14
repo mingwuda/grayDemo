@@ -35,6 +35,10 @@ public class ProviderServiceManager {
     @Value("${zookeeper.connect-string:localhost:2181}")
     private String zookeeperConnectString;
 
+    // 服务名称配置
+    @Value("${spring.application.name:default-service}")
+    private String serviceName;
+
     private CuratorFramework curatorFramework;
     private NodeCache releaseStateCache;
     private volatile boolean isServiceOnline = true;
@@ -98,7 +102,7 @@ public class ProviderServiceManager {
     }
 
     private void setupReleaseStateListener() throws Exception {
-        String releaseStatePath = "/release/status";
+        String releaseStatePath = "/release/" + serviceName + "/status";
 
         // 确保路径存在
         if (curatorFramework.checkExists().forPath(releaseStatePath) == null) {
@@ -112,38 +116,38 @@ public class ProviderServiceManager {
         releaseStateCache.getListenable().addListener(() -> {
             if (releaseStateCache.getCurrentData() != null && releaseStateCache.getCurrentData().getData() != null) {
                 String newState = new String(releaseStateCache.getCurrentData().getData());
-                log.info("Detected state change via ZK: {}", newState);
+                log.info("Detected state change for service {} via ZK: {}", serviceName, newState);
                 
                 // 修复：避免重复处理相同状态
                 if (!newState.equals(lastZkState)) {
                     lastZkState = newState;
                     handleReleaseStateChange(ReleaseState.valueOf(newState));
                 } else {
-                    log.info("Skipping duplicate state change: {}", newState);
+                    log.info("Skipping duplicate state change for service {}: {}", serviceName, newState);
                 }
             }
         });
         releaseStateCache.start(true); // 启动时获取当前数据
-        log.info("ZK state listener activated at path: {}", releaseStatePath);
+        log.info("ZK state listener activated for service {} at path: {}", serviceName, releaseStatePath);
     }
 
     private void checkAndUpdateServiceStatus() {
         try {
-            String releaseStatePath = "/release/status";
+            String releaseStatePath = "/release/" + serviceName + "/status";
             byte[] data = curatorFramework.getData().forPath(releaseStatePath);
             if (data != null) {
                 String currentState = new String(data);
-                log.info("Initial state: {}, processing for node type: {}", currentState, nodeType);
+                log.info("Initial state for service {}: {}, processing for node type: {}", serviceName, currentState, nodeType);
                 lastZkState = currentState;
                 handleReleaseStateChange(ReleaseState.valueOf(currentState));
             } else {
-                log.warn("No data in release state node, using default state");
+                log.warn("No data in release state node for service {}, using default state", serviceName);
                 handleReleaseStateChange(ReleaseState.ALL_ACCESSABLE);
             }
         } catch (Exception e) {
-            log.error("Failed to check release state", e);
+            log.error("Failed to check release state for service: {}", serviceName, e);
             // 失败时保持安全状态
-            log.warn("Defaulting to unregistered state due to error");
+            log.warn("Defaulting to unregistered state due to error for service: {}", serviceName);
             safeUnregisterAllServices();
         }
     }

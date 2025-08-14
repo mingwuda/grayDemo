@@ -23,7 +23,7 @@ management:
       show-details: always
 
 node:
-  type: PRD
+  type: ${NODE_TYPE:PRD}
 
 zookeeper:
   connect-string: ${ZOOKEEPER_CONNECT_STRING:localhost:2181}

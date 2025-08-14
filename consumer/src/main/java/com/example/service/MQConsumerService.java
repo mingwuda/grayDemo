@@ -21,7 +21,10 @@ public class MQConsumerService {
     private static final Logger logger = LoggerFactory.getLogger(MQConsumerService.class);
 
     @Autowired
-    private ReleaseStateService releaseStateService;
+    private ServiceAwareReleaseStateService releaseStateService;
+    
+    @Value("${spring.application.name:default-service}")
+    private String serviceName;
 
     @Value("${node.type}")
     private String nodeType;
@@ -44,17 +47,17 @@ public class MQConsumerService {
     @PostConstruct
     public void init() {
         // 注册状态变化监听器
-        releaseStateService.addStateChangeListener(this::onReleaseStateChanged);
+        releaseStateService.addServiceStateChangeListener(serviceName, this::onReleaseStateChanged);
         
         // 根据当前状态决定是否启动消费者
-        ReleaseState currentState = releaseStateService.getCurrentReleaseState();
+        ReleaseState currentState = releaseStateService.getServiceReleaseState(serviceName);
         onReleaseStateChanged(currentState);
     }
 
     @PreDestroy
     public void destroy() {
         // 移除监听器
-        releaseStateService.removeStateChangeListener(this::onReleaseStateChanged);
+        releaseStateService.removeServiceStateChangeListener(serviceName, this::onReleaseStateChanged);
         shutdownConsumer();
     }
 
