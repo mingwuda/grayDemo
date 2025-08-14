@@ -18,10 +18,7 @@ import org.springframework.stereotype.Component;
 
 import javax.annotation.PostConstruct;
 import javax.annotation.PreDestroy;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
+import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.locks.ReentrantLock;
 
@@ -233,81 +230,6 @@ public class ProviderServiceManager {
         }
     }
 
-    // 每30秒检查一次服务状态的一致性
-    @Scheduled(fixedDelay = 30000)
-    public void checkServiceStateConsistency() {
-        statusLock.lock();
-        try {
-            log.debug("Running service state consistency check...");
-            
-            int inconsistencyCount = 0;
-            for (ServiceConfig<?> service : serviceConfigs) {
-                String serviceKey = service.getInterface();
-                ServiceStatus status = serviceStatusMap.computeIfAbsent(
-                    serviceKey, k -> new ServiceStatus(isServiceOnline)
-                );
-                
-                boolean isActuallyRegistered = isRegisteredInZk(service);
-                if (status.shouldBeRegistered != isActuallyRegistered) {
-                    inconsistencyCount++;
-                    log.warn("Inconsistency detected for service [{}]: should be registered={}, actually registered={}",
-                             serviceKey, status.shouldBeRegistered, isActuallyRegistered);
-                    
-                    // 强制修正状态
-                    if (status.shouldBeRegistered) {
-                        reExportService(service);
-                    } else {
-                        if (service.isExported()) {
-                            service.unexport();
-                            log.info("Unexported service due to inconsistency: {}", serviceKey);
-                        }
-                    }
-                }
-            }
-            
-            if (inconsistencyCount > 0) {
-                log.error("Fixed {} service inconsistencies", inconsistencyCount);
-            } else {
-                log.debug("No service state inconsistencies found");
-            }
-        } finally {
-            statusLock.unlock();
-        }
-    }
-
-    // 修复关键：重新导出服务的方法
-    private void reExportService(ServiceConfig<?> service) {
-        try {
-            String serviceKey = service.getInterface();
-            log.warn("Re-exporting service: {}", serviceKey);
-            
-            // 完全重新创建服务配置
-            ServiceConfig newServiceConfig = new ServiceConfig<>();
-            newServiceConfig.setInterface(service.getInterface());
-            newServiceConfig.setRef(service.getRef());
-            newServiceConfig.setVersion(service.getVersion());
-            newServiceConfig.setGroup(service.getGroup());
-            newServiceConfig.setProtocols(service.getProtocols());
-            newServiceConfig.setRegistries(service.getRegistries());
-            
-            // 注销旧服务
-            if (service.isExported()) {
-                service.unexport();
-            }
-            
-            // 重新导出
-            newServiceConfig.export();
-            
-            // 替换服务列表中的实例
-            serviceConfigs.remove(service);
-            serviceConfigs.add(newServiceConfig);
-            
-            log.info("Successfully re-exported service: {}", serviceKey);
-            registryCache.remove(serviceKey);
-        } catch (Exception e) {
-            log.error("Failed to re-export service: {}", service.getInterface(), e);
-        }
-    }
 
     @PreDestroy
     public void destroy() {
@@ -336,65 +258,118 @@ public class ProviderServiceManager {
         return isServiceOnline;
     }
 
-    /**
-     * 启动所有Dubbo服务（关键修复版）
-     */
     private void startAllServices() {
         log.info("Starting services for node: {}", nodeType);
         int startedCount = 0;
-        
-        for (ServiceConfig<?> service : serviceConfigs) {
+
+        // 修复：创建服务副本列表用于遍历
+        List<ServiceConfig<?>> servicesToProcess = new ArrayList<>(serviceConfigs);
+
+        for (ServiceConfig<?> service : servicesToProcess) {
             String serviceKey = service.getInterface();
             ServiceStatus status = serviceStatusMap.computeIfAbsent(
-                serviceKey, k -> new ServiceStatus(true)
+                    serviceKey, k -> new ServiceStatus(true)
             );
             status.shouldBeRegistered = true;
-            
+
             try {
-                // 关键修复：强制重新创建ServiceConfig来避免缓存问题
-                log.info("重新创建并注册服务: {}", serviceKey);
-                
-                // 创建新的ServiceConfig实例
-                ServiceConfig newService = new ServiceConfig<>();
-                newService.setInterface(service.getInterface());
-                newService.setRef(service.getRef());
-                newService.setVersion(service.getVersion());
-                newService.setGroup(service.getGroup());
-                newService.setTimeout(service.getTimeout());
-                newService.setProtocols(service.getProtocols());
-                newService.setRegistries(service.getRegistries());
-                
-                // 注销旧服务
+                // 修复：总是先尝试注销（确保刷新状态）
                 if (service.isExported()) {
                     service.unexport();
-                    log.info("已注销旧服务: {}", serviceKey);
                 }
-                
-                // 导出新服务
-                newService.export();
-                log.info("已导出新服务: {}", serviceKey);
-                
-                // 更新服务列表
-                serviceConfigs.remove(service);
-                serviceConfigs.add(newService);
-                
-                startedCount++;
-                status.actuallyRegistered = true;
-                
-                // 强制刷新缓存
-                registryCache.clear();
-                
+
+                // 重新导出服务
+                service.export();
+
+                // 检查注册情况
+                if (isRegisteredInZk(service)) {
+                    startedCount++;
+                    status.actuallyRegistered = true;
+                    log.info("Exported service: {} -> SUCCESS", serviceKey);
+                } else {
+                    log.error("Failed to register service in ZK: {}", serviceKey);
+                    status.actuallyRegistered = false;
+
+                    // 修复：需要重新导出的服务单独处理
+                    if (shouldReexportOnFailure(service)) {
+                        reExportService(service);
+                    }
+                }
             } catch (Exception e) {
                 log.error("Failed to export service: {}", serviceKey, e);
                 status.actuallyRegistered = false;
+
+                // 修复：需要重新导出的服务单独处理
+                if (shouldReexportOnFailure(service)) {
+                    reExportService(service);
+                }
             }
         }
-        
+
         if (startedCount > 0) {
             log.info("Successfully started {} Dubbo services", startedCount);
         } else {
             log.error("No services successfully started!");
         }
+    }
+
+    // 修复：避免在遍历过程中修改原始列表
+    private void reExportService(ServiceConfig<?> service) {
+        try {
+            String serviceKey = service.getInterface();
+            log.warn("Re-exporting service: {}", serviceKey);
+
+            // 完全重新创建服务配置
+            ServiceConfig newServiceConfig = new ServiceConfig<>();
+            newServiceConfig.setInterface(service.getInterface());
+            newServiceConfig.setRef(service.getRef());
+            newServiceConfig.setVersion(service.getVersion());
+            newServiceConfig.setGroup(service.getGroup());
+            newServiceConfig.setProtocols(service.getProtocols());
+            newServiceConfig.setRegistries(service.getRegistries());
+
+            // 注销旧服务
+            if (service.isExported()) {
+                service.unexport();
+            }
+
+            // 重新导出
+            newServiceConfig.export();
+
+            // 修复：使用线程安全的方式更新服务列表
+            updateServiceConfig(service, newServiceConfig);
+
+            log.info("Successfully re-exported service: {}", serviceKey);
+            registryCache.remove(serviceKey);
+        } catch (Exception e) {
+            log.error("Failed to re-export service: {}", service.getInterface(), e);
+        }
+    }
+
+    // 修复：线程安全地更新服务配置
+    private void updateServiceConfig(ServiceConfig<?> oldService, ServiceConfig<?> newService) {
+        statusLock.lock();
+        try {
+            // 从列表中移除旧服务配置
+            serviceConfigs.remove(oldService);
+
+            // 添加新服务配置
+            serviceConfigs.add(newService);
+
+            // 更新状态映射
+            ServiceStatus status = serviceStatusMap.get(oldService.getInterface());
+            if (status != null) {
+                serviceStatusMap.put(newService.getInterface(), status);
+            }
+        } finally {
+            statusLock.unlock();
+        }
+    }
+
+    // 判断是否需要重新导出
+    private boolean shouldReexportOnFailure(ServiceConfig<?> service) {
+        // 根据实际情况添加判断条件
+        return true;
     }
 
     /**
